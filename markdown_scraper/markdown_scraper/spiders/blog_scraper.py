@@ -4,29 +4,26 @@ import re
 from urllib.parse import urljoin
 import markdown as md
 import pdfkit
+import time
+import hashlib
 
-class BlogScraperSpider(scrapy.Spider):
-    name = "blog_scraper"
-    allowed_domains = ["move-book.com"]
-    start_urls = ["https://move-book.com/"]
+class SuiDocsScraperSpider(scrapy.Spider):
+    name = "sui_docs_scraper"
+    allowed_domains = ["docs.sui.io"]
+    start_urls = ["https://docs.sui.io/"]
     visited_urls = set()
+    file_counter = 0  # Thêm biến đếm để tạo số thứ tự duy nhất
 
     def parse(self, response):
-        sidebar_links = response.css('nav#sidebar a::attr(href)').getall()
-        for link in sidebar_links:
-            absolute_url = urljoin(response.url, link)
-            if absolute_url not in self.visited_urls:
-                self.visited_urls.add(absolute_url)
-                yield response.follow(absolute_url, callback=self.parse_page)
-
-        yield from self.parse_page(response)
-
-    def parse_page(self, response):
+        # Lấy tiêu đề của trang
         title = response.css('h1::text').get()
         if not title:
             title = "untitled"
 
+        # Bắt đầu tạo nội dung markdown
         markdown_content = f"# {title}\n\n"
+
+        # Lấy các đoạn văn bản
         paragraphs = response.css('main p')
         for p in paragraphs:
             text = p.css('::text').getall()
@@ -40,6 +37,7 @@ class BlogScraperSpider(scrapy.Spider):
                             text[i] = f"[{link_text}]({link_href})"
             markdown_content += " ".join(text).strip() + "\n\n"
 
+        # Lấy các phần (sections) với tiêu đề h2
         sections = response.css('main h2')
         for section in sections:
             subtitle = section.css('::text').get()
@@ -65,10 +63,12 @@ class BlogScraperSpider(scrapy.Spider):
                 if code:
                     markdown_content += "```bash\n" + code.strip() + "\n```\n\n"
 
+        # Tạo tên file duy nhất bằng cách thêm số thứ tự
         filename = re.sub(r'[^\w\s-]', '', title).strip().replace(' ', '_').lower()
-        filename = f"{filename}_{re.sub(r'[^\w]', '_', response.url.split('/')[-1])}"
+        self.file_counter += 1  # Tăng biến đếm
+        filename = f"{filename}_{self.file_counter}"  # Thêm số thứ tự vào tên file
 
-        output_dir = "output_pdf"  # Change output directory name
+        output_dir = "output_docs_sui_pdf"  # Giữ nguyên thư mục output PDF
         os.makedirs(output_dir, exist_ok=True)
 
         # Convert markdown to HTML directly (without saving file)
@@ -99,3 +99,10 @@ class BlogScraperSpider(scrapy.Spider):
         except Exception as e:
             self.log(f"❌ Error when converting to PDF: {e}")
             self.log("Please make sure wkhtmltopdf is installed correctly")
+
+        # Theo dõi các liên kết trong trang để thu thập thêm dữ liệu
+        for link in response.css('a::attr(href)').getall():
+            absolute_url = urljoin(response.url, link)
+            if absolute_url not in self.visited_urls:
+                self.visited_urls.add(absolute_url)
+                yield response.follow(absolute_url, callback=self.parse)
